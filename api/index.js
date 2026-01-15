@@ -1,160 +1,117 @@
 // ============================================================================
-// Database Records Manager - Browser-compatible (GitHub Pages ready!)
-// Uses Supabase REST API directly - no server required
+// Vercel Serverless API - Proxies requests to Supabase REST API
+// Reads credentials from environment variables (set in Vercel project settings)
 // ============================================================================
 
-import Database from './connection/database.js';
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || '';
+const SCHEMA_NAME = process.env.SCHEMA_NAME || 'public';
+const DEFAULT_TABLE = process.env.DEFAULT_TABLE_NAME || 'hospital_records';
 
-// Initialize database connection
-const db = new Database();
-
-// ─── DOM Elements ────────────────────────────────────────────────────────────
-const recordForm = document.getElementById('recordForm');
-const dynamicFields = document.getElementById('dynamicFields');
-const addFieldBtn = document.getElementById('addFieldBtn');
-const refreshBtn = document.getElementById('refreshBtn');
-const statusDiv = document.getElementById('status');
-const recordsTable = document.getElementById('recordsTable');
-
-const filterForm = document.getElementById('filterForm');
-const filterFields = document.getElementById('filterFields');
-const addFilterBtn = document.getElementById('addFilterBtn');
-const clearFilterBtn = document.getElementById('clearFilterBtn');
-const filteredTable = document.getElementById('filteredTable');
-
-// ─── Initialize ──────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-    addField();       // Add one empty field for insert form
-    addFilterField(); // Add one empty filter field
-    loadRecords();    // Load all records on page load
-});
-
-// ─── Dynamic Field Management ────────────────────────────────────────────────
-function addField() {
-    const fieldRow = document.createElement('div');
-    fieldRow.className = 'field-row';
-    fieldRow.innerHTML = `
-        <input type="text" placeholder="Column name" class="col-name" required>
-        <input type="text" placeholder="Value" class="col-value">
-        <button type="button" class="remove-btn" onclick="this.parentElement.remove()">✕</button>
-    `;
-    dynamicFields.appendChild(fieldRow);
-}
-
-function addFilterField() {
-    const fieldRow = document.createElement('div');
-    fieldRow.className = 'field-row';
-    fieldRow.innerHTML = `
-        <input type="text" placeholder="Column name" class="filter-col" required>
-        <input type="text" placeholder="Value" class="filter-val">
-        <button type="button" class="remove-btn" onclick="this.parentElement.remove()">✕</button>
-    `;
-    filterFields.appendChild(fieldRow);
-}
-
-addFieldBtn.addEventListener('click', addField);
-addFilterBtn.addEventListener('click', addFilterField);
-
-// ─── Load All Records ────────────────────────────────────────────────────────
-async function loadRecords() {
-    recordsTable.innerHTML = '<p>Loading...</p>';
-    try {
-        const rows = await db.selectAll();
-        renderTable(rows, recordsTable);
-    } catch (err) {
-        recordsTable.innerHTML = `<p class="error">Error: ${err.message}</p>`;
+function buildHeaders() {
+    const headers = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation'
+    };
+    if (SCHEMA_NAME && SCHEMA_NAME !== 'public') {
+        headers['Accept-Profile'] = SCHEMA_NAME;
+        headers['Content-Profile'] = SCHEMA_NAME;
     }
+    return headers;
 }
 
-refreshBtn.addEventListener('click', loadRecords);
+function buildFilterQuery(filters = {}) {
+    return Object.entries(filters)
+        .map(([col, val]) => `${encodeURIComponent(col)}=eq.${encodeURIComponent(String(val))}`)
+        .join('&');
+}
 
-// ─── Insert Record ───────────────────────────────────────────────────────────
-recordForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const data = {};
-    const rows = dynamicFields.querySelectorAll('.field-row');
-    rows.forEach(row => {
-        const col = row.querySelector('.col-name').value.trim();
-        const val = row.querySelector('.col-value').value;
-        if (col) data[col] = val || null;
-    });
+function cors(res) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
 
-    if (Object.keys(data).length === 0) {
-        showStatus('Please add at least one field', 'error');
-        return;
+module.exports = async (req, res) => {
+    cors(res);
+
+    // Handle CORS preflight
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+        return res.status(500).json({ message: 'Server misconfigured: SUPABASE_URL or SUPABASE_KEY missing' });
     }
 
     try {
-        await db.insert(data);
-        showStatus('Record inserted successfully!', 'success');
-        loadRecords();
+        const method = req.method.toUpperCase();
+
+        // ─── GET: Select records ─────────────────────────────────────────────
+        if (method === 'GET') {
+            const table = req.query.table || DEFAULT_TABLE;
+            const base = `${SUPABASE_URL}/rest/v1/${table}`;
+
+            // Build filters from query params starting with 'f_'
+            const filters = {};
+            Object.keys(req.query || {}).forEach(k => {
+                if (k.startsWith('f_')) filters[k.substring(2)] = req.query[k];
+            });
+
+            const limit = req.query.limit;
+            let url = `${base}?select=*`;
+            if (Object.keys(filters).length > 0) url += '&' + buildFilterQuery(filters);
+            if (limit) url += `&limit=${encodeURIComponent(limit)}`;
+
+            const r = await fetch(url, { method: 'GET', headers: buildHeaders() });
+            const json = await r.json();
+            if (!r.ok) return res.status(r.status).json(json);
+            return res.status(200).json(json);
+        }
+
+        // ─── POST/PATCH/DELETE: Modify records ───────────────────────────────
+        const body = req.body || {};
+        const table = body.table || DEFAULT_TABLE;
+        const base = `${SUPABASE_URL}/rest/v1/${table}`;
+
+        if (method === 'POST') {
+            const data = body.data || {};
+            const r = await fetch(base, { method: 'POST', headers: buildHeaders(), body: JSON.stringify(data) });
+            const json = await r.json();
+            if (!r.ok) return res.status(r.status).json(json);
+            return res.status(200).json(json);
+        }
+
+        if (method === 'PATCH') {
+            const data = body.data || {};
+            const filters = body.filters || {};
+            if (!filters || Object.keys(filters).length === 0) {
+                return res.status(400).json({ message: 'PATCH requires filters to prevent mass updates' });
+            }
+            const url = `${base}?${buildFilterQuery(filters)}`;
+            const r = await fetch(url, { method: 'PATCH', headers: buildHeaders(), body: JSON.stringify(data) });
+            const json = await r.json();
+            if (!r.ok) return res.status(r.status).json(json);
+            return res.status(200).json(json);
+        }
+
+        if (method === 'DELETE') {
+            const filters = body.filters || {};
+            if (!filters || Object.keys(filters).length === 0) {
+                return res.status(400).json({ message: 'DELETE requires filters to prevent mass deletion' });
+            }
+            const url = `${base}?${buildFilterQuery(filters)}`;
+            const r = await fetch(url, { method: 'DELETE', headers: buildHeaders() });
+            const json = await r.json();
+            if (!r.ok) return res.status(r.status).json(json);
+            return res.status(200).json(json);
+        }
+
+        return res.status(405).json({ message: 'Method not allowed' });
     } catch (err) {
-        showStatus(`Insert failed: ${err.message}`, 'error');
+        console.error('api/index error:', err);
+        return res.status(500).json({ message: err.message || 'Internal server error' });
     }
-});
-
-// ─── Filter Records ──────────────────────────────────────────────────────────
-filterForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const filters = {};
-    const rows = filterFields.querySelectorAll('.field-row');
-    rows.forEach(row => {
-        const col = row.querySelector('.filter-col').value.trim();
-        const val = row.querySelector('.filter-val').value.trim();
-        if (col && val) filters[col] = val;
-    });
-
-    if (Object.keys(filters).length === 0) {
-        filteredTable.innerHTML = '<p class="error">Please add at least one filter</p>';
-        return;
-    }
-
-    filteredTable.innerHTML = '<p>Loading...</p>';
-    try {
-        const rows = await db.select(filters);
-        renderTable(rows, filteredTable);
-    } catch (err) {
-        filteredTable.innerHTML = `<p class="error">Error: ${err.message}</p>`;
-    }
-});
-
-clearFilterBtn.addEventListener('click', () => {
-    filterFields.innerHTML = '';
-    addFilterField();
-    filteredTable.innerHTML = '';
-});
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-function renderTable(rows, container) {
-    if (!rows || rows.length === 0) {
-        container.innerHTML = '<p>No records found.</p>';
-        return;
-    }
-
-    const cols = Object.keys(rows[0]);
-    let html = '<table><thead><tr>';
-    cols.forEach(c => html += `<th>${escapeHtml(c)}</th>`);
-    html += '</tr></thead><tbody>';
-    rows.forEach(row => {
-        html += '<tr>';
-        cols.forEach(c => {
-            const v = row[c];
-            html += `<td>${v === null ? '<em>null</em>' : escapeHtml(String(v))}</td>`;
-        });
-        html += '</tr>';
-    });
-    html += '</tbody></table>';
-    container.innerHTML = html;
-}
-
-function escapeHtml(str) {
-    return str.replace(/[&<>"']/g, m => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    })[m]);
-}
-
-function showStatus(msg, type) {
-    statusDiv.textContent = msg;
-    statusDiv.className = type;
-    setTimeout(() => { statusDiv.textContent = ''; statusDiv.className = ''; }, 4000);
-}
+};
