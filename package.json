@@ -1,11 +1,5 @@
 {
-  "name": "api-db-vercel",
-  "version": "1.0.0",
-  "private": true,
-  "engines": {
-    "node": ">=16"
-  },
   "dependencies": {
-    "pg": "^8.11.0"
+    "dotenv": "^17.2.3"
   }
 }

@@ -28,12 +28,6 @@
     </div>
 
     <div class="section">
-        <h2>🔗 API Test</h2>
-        <button id="apiTestBtn">Test API (fetch 1 row)</button>
-        <pre id="apiTestResult" style="white-space:pre-wrap; background:#f8f8f8; padding:8px; border-radius:4px; margin-top:8px;"></pre>
-    </div>
-
-    <div class="section">
         <h2>🔍 Filter Records</h2>
         <form id="filterForm">
             <div id="filterFields"></div>
@@ -47,19 +41,5 @@
     </div>
 
     <script type="module" src="src/index.js"></script>
-    <script>
-        // Small helper to test the newly-added serverless API
-        document.getElementById('apiTestBtn')?.addEventListener('click', async () => {
-            const out = document.getElementById('apiTestResult');
-            out.textContent = 'Testing...';
-            try {
-                const res = await fetch(`/api/db?table=hospital_records&limit=1`);
-                const data = await res.json();
-                out.textContent = JSON.stringify(data, null, 2);
-            } catch (err) {
-                out.textContent = 'Error: ' + err.message;
-            }
-        });
-    </script>
 </body>
 </html>
