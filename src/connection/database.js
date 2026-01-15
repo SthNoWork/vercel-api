@@ -8,24 +8,16 @@
  *   const rows = await db.selectAll();
  */
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_TABLE_NAME, SCHEMA_NAME } from './config.js';
+import { API_BASE, DEFAULT_TABLE_NAME } from './config.js';
 
 export default class Database {
     
     constructor(tableName = null) {
         this.tableName = tableName || DEFAULT_TABLE_NAME;
-        this.baseUrl = `${SUPABASE_URL}/rest/v1`;
+        this.baseUrl = API_BASE; // serverless API (e.g., /api/db)
         this.headers = {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation'
+            'Content-Type': 'application/json'
         };
-        // Add schema header if not using public schema
-        if (SCHEMA_NAME && SCHEMA_NAME !== 'public') {
-            this.headers['Accept-Profile'] = SCHEMA_NAME;
-            this.headers['Content-Profile'] = SCHEMA_NAME;
-        }
     }
 
     // =========================================================================
@@ -37,10 +29,9 @@ export default class Database {
      * @returns {Promise<Array>} Array of row objects
      */
     async selectAll() {
-        const response = await fetch(`${this.baseUrl}/${this.tableName}?select=*`, {
-            method: 'GET',
-            headers: this.headers
-        });
+        const url = new URL(this.baseUrl, window.location.origin);
+        url.searchParams.set('table', this.tableName);
+        const response = await fetch(url.toString(), { method: 'GET', headers: this.headers });
         
         if (!response.ok) {
             const error = await response.json();
@@ -60,15 +51,11 @@ export default class Database {
             return this.selectAll();
         }
 
-        // Build query string with filters
-        const queryParams = Object.entries(filters)
-            .map(([col, val]) => `${encodeURIComponent(col)}=eq.${encodeURIComponent(val)}`)
-            .join('&');
+        const url = new URL(this.baseUrl, window.location.origin);
+        url.searchParams.set('table', this.tableName);
+        Object.entries(filters).forEach(([k, v]) => url.searchParams.append(k, String(v)));
 
-        const response = await fetch(`${this.baseUrl}/${this.tableName}?select=*&${queryParams}`, {
-            method: 'GET',
-            headers: this.headers
-        });
+        const response = await fetch(url.toString(), { method: 'GET', headers: this.headers });
         
         if (!response.ok) {
             const error = await response.json();
@@ -84,10 +71,11 @@ export default class Database {
      * @returns {Promise<Object>} The inserted row
      */
     async insert(data) {
-        const response = await fetch(`${this.baseUrl}/${this.tableName}`, {
+        const payload = { table: this.tableName, data };
+        const response = await fetch(this.baseUrl, {
             method: 'POST',
             headers: this.headers,
-            body: JSON.stringify(data)
+            body: JSON.stringify(payload)
         });
         
         if (!response.ok) {
@@ -110,14 +98,11 @@ export default class Database {
             throw new Error('Update requires at least one filter to prevent accidental mass updates');
         }
 
-        const queryParams = Object.entries(filters)
-            .map(([col, val]) => `${encodeURIComponent(col)}=eq.${encodeURIComponent(val)}`)
-            .join('&');
-
-        const response = await fetch(`${this.baseUrl}/${this.tableName}?${queryParams}`, {
+        const payload = { table: this.tableName, data, filters };
+        const response = await fetch(this.baseUrl, {
             method: 'PATCH',
             headers: this.headers,
-            body: JSON.stringify(data)
+            body: JSON.stringify(payload)
         });
         
         if (!response.ok) {
@@ -139,13 +124,11 @@ export default class Database {
             throw new Error('Delete requires at least one filter to prevent accidental mass deletion');
         }
 
-        const queryParams = Object.entries(filters)
-            .map(([col, val]) => `${encodeURIComponent(col)}=eq.${encodeURIComponent(val)}`)
-            .join('&');
-
-        const response = await fetch(`${this.baseUrl}/${this.tableName}?${queryParams}`, {
+        const payload = { table: this.tableName, filters };
+        const response = await fetch(this.baseUrl, {
             method: 'DELETE',
-            headers: this.headers
+            headers: this.headers,
+            body: JSON.stringify(payload)
         });
         
         if (!response.ok) {
@@ -163,10 +146,10 @@ export default class Database {
      */
     async testConnection() {
         try {
-            const response = await fetch(`${this.baseUrl}/${this.tableName}?select=*&limit=1`, {
-                method: 'GET',
-                headers: this.headers
-            });
+            const url = new URL(this.baseUrl, window.location.origin);
+            url.searchParams.set('table', this.tableName);
+            url.searchParams.set('limit', '1');
+            const response = await fetch(url.toString(), { method: 'GET', headers: this.headers });
             return response.ok;
         } catch (err) {
             console.error('Connection test failed:', err);

@@ -1,8 +1,11 @@
 {
-  "name": "hospital-api",
+  "name": "api-db-vercel",
   "version": "1.0.0",
-  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=16"
+  },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0"
+    "pg": "^8.11.0"
   }
 }
