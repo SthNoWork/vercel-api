@@ -8,168 +8,68 @@
  *   const rows = await db.selectAll();
  */
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_TABLE_NAME, SCHEMA_NAME } from './config.js';
+import { DEFAULT_TABLE_NAME } from './config.js';
 
+// Client-side wrapper that proxies actions to the serverless API at /api/db
+// This avoids embedding service credentials in client code when deploying.
 export default class Database {
-    
     constructor(tableName = null) {
         this.tableName = tableName || DEFAULT_TABLE_NAME;
-        this.baseUrl = `${SUPABASE_URL}/rest/v1`;
-        this.headers = {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation'
-        };
-        // Add schema header if not using public schema
-        if (SCHEMA_NAME && SCHEMA_NAME !== 'public') {
-            this.headers['Accept-Profile'] = SCHEMA_NAME;
-            this.headers['Content-Profile'] = SCHEMA_NAME;
-        }
+        this.apiBase = '/api/db';
     }
 
-    // =========================================================================
-    // CRUD OPERATIONS
-    // =========================================================================
+    async request(method, opts = {}) {
+        const url = new URL(this.apiBase, window.location.origin);
+        if (opts.query) {
+            Object.entries(opts.query).forEach(([k, v]) => url.searchParams.append(k, v));
+        }
 
-    /**
-     * SELECT * FROM table
-     * @returns {Promise<Array>} Array of row objects
-     */
+        const fetchOpts = { method, headers: {} };
+        if (opts.body) {
+            fetchOpts.headers['Content-Type'] = 'application/json';
+            fetchOpts.body = JSON.stringify(opts.body);
+        }
+
+        const res = await fetch(url.toString(), fetchOpts);
+        if (!res.ok) {
+            const errText = await res.text();
+            let msg = errText;
+            try { msg = JSON.parse(errText).message || JSON.parse(errText); } catch (e) {}
+            throw new Error(msg || `Request failed: ${res.status}`);
+        }
+        return await res.json();
+    }
+
     async selectAll() {
-        const response = await fetch(`${this.baseUrl}/${this.tableName}?select=*`, {
-            method: 'GET',
-            headers: this.headers
-        });
-        
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Failed to fetch records');
-        }
-        
-        return await response.json();
+        return await this.request('GET', { query: { table: this.tableName } });
     }
 
-    /**
-     * SELECT * FROM table WHERE column = value
-     * @param {Object} filters - Map of column names and their values for WHERE clause
-     * @returns {Promise<Array>} Array of matching row objects
-     */
     async select(filters = {}) {
-        if (!filters || Object.keys(filters).length === 0) {
-            return this.selectAll();
-        }
-
-        // Build query string with filters
-        const queryParams = Object.entries(filters)
-            .map(([col, val]) => `${encodeURIComponent(col)}=eq.${encodeURIComponent(val)}`)
-            .join('&');
-
-        const response = await fetch(`${this.baseUrl}/${this.tableName}?select=*&${queryParams}`, {
-            method: 'GET',
-            headers: this.headers
-        });
-        
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Failed to fetch records');
-        }
-        
-        return await response.json();
+        if (!filters || Object.keys(filters).length === 0) return this.selectAll();
+        // encode filters as query params 'filter_col' for server
+        const query = { table: this.tableName };
+        Object.entries(filters).forEach(([k, v]) => query[`f_${k}`] = v);
+        return await this.request('GET', { query });
     }
 
-    /**
-     * INSERT INTO table
-     * @param {Object} data - Object with column-value pairs to insert
-     * @returns {Promise<Object>} The inserted row
-     */
     async insert(data) {
-        const response = await fetch(`${this.baseUrl}/${this.tableName}`, {
-            method: 'POST',
-            headers: this.headers,
-            body: JSON.stringify(data)
-        });
-        
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Failed to insert record');
-        }
-        
-        const rows = await response.json();
-        return rows[0];
+        return await this.request('POST', { body: { table: this.tableName, data } });
     }
 
-    /**
-     * UPDATE table SET ... WHERE ...
-     * @param {Object} data - Object with column-value pairs to update
-     * @param {Object} filters - WHERE conditions
-     * @returns {Promise<Object>} Result with updated rows
-     */
     async update(data, filters = {}) {
-        if (!filters || Object.keys(filters).length === 0) {
-            throw new Error('Update requires at least one filter to prevent accidental mass updates');
-        }
-
-        const queryParams = Object.entries(filters)
-            .map(([col, val]) => `${encodeURIComponent(col)}=eq.${encodeURIComponent(val)}`)
-            .join('&');
-
-        const response = await fetch(`${this.baseUrl}/${this.tableName}?${queryParams}`, {
-            method: 'PATCH',
-            headers: this.headers,
-            body: JSON.stringify(data)
-        });
-        
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Failed to update records');
-        }
-        
-        const rows = await response.json();
-        return { rows, rowsAffected: rows.length };
+        return await this.request('PATCH', { body: { table: this.tableName, data, filters } });
     }
 
-    /**
-     * DELETE FROM table WHERE ...
-     * @param {Object} filters - WHERE conditions (required to prevent accidental deletion)
-     * @returns {Promise<Object>} Result with deleted rows
-     */
     async delete(filters = {}) {
-        if (!filters || Object.keys(filters).length === 0) {
-            throw new Error('Delete requires at least one filter to prevent accidental mass deletion');
-        }
-
-        const queryParams = Object.entries(filters)
-            .map(([col, val]) => `${encodeURIComponent(col)}=eq.${encodeURIComponent(val)}`)
-            .join('&');
-
-        const response = await fetch(`${this.baseUrl}/${this.tableName}?${queryParams}`, {
-            method: 'DELETE',
-            headers: this.headers
-        });
-        
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Failed to delete records');
-        }
-        
-        const rows = await response.json();
-        return { rows, rowsAffected: rows.length };
+        return await this.request('DELETE', { body: { table: this.tableName, filters } });
     }
 
-    /**
-     * Test the connection by fetching table info
-     * @returns {Promise<boolean>} True if connection successful
-     */
     async testConnection() {
         try {
-            const response = await fetch(`${this.baseUrl}/${this.tableName}?select=*&limit=1`, {
-                method: 'GET',
-                headers: this.headers
-            });
-            return response.ok;
-        } catch (err) {
-            console.error('Connection test failed:', err);
+            await this.request('GET', { query: { table: this.tableName, limit: '1' } });
+            return true;
+        } catch (e) {
+            console.error('Connection test failed', e);
             return false;
         }
     }

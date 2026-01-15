@@ -1,0 +1,13 @@
+# Environment files - DO NOT COMMIT
+.env
+.env.local
+.env.*.local
+
+# Sensitive config files
+connection/config.js
+
+# Certificate files (not needed in repo)
+*.crt
+
+# Node modules
+node_modules/
