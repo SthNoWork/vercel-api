@@ -1,4 +1,7 @@
 {
+  "scripts": {
+    "start": "node -e \"require('fs').readdirSync('./src').filter(f=>f.endsWith('.js')).forEach(f=>require('./src/'+f))\""
+  },
   "dependencies": {
     "dotenv": "^17.2.3"
   }
